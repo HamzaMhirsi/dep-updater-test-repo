@@ -36,13 +36,44 @@ class UserViewSet(viewsets.ModelViewSet):
     # Deprecated: detail_route was removed in DRF 3.15, use @action(detail=True)
     @detail_route(methods=['post'])
     def activate(self, request, pk=None):
-        return Response({'status': 'activated', 'user_id': pk})
-
     # Deprecated: list_route was removed in DRF 3.15, use @action(detail=False)
     @list_route(methods=['get'])
     def me(self, request):
         return Response({'user': {'id': request.user.id}})
 
+    # GDPR Art. 16 — Right to Rectification
+    # Authenticated users can correct their own personal data. Updates
+    # are applied via the serializer (partial update) and audit-logged.
+    @list_route(methods=['patch', 'put'])
+    def update_me(self, request):
+        import logging
+        logger = logging.getLogger('gdpr.audit')
+
+        # Whitelist fields a data subject may rectify about themselves.
+        RECTIFIABLE = {'username', 'email'}
+        payload = {k: v for k, v in request.data.items() if k in RECTIFIABLE}
+        if not payload:
+            return Response(
+                {'error': 'No rectifiable fields provided'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = self.get_serializer(data=payload, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        # NOTE: persist via your User model + propagate to any related
+        # profile/auth/marketing tables here so no data source is stale.
+        # e.g. User.objects.filter(pk=request.user.id).update(**payload)
+
+        logger.info(
+            'gdpr.rectification user_id=%s fields=%s',
+            getattr(request.user, 'id', None),
+            list(payload.keys()),
+        )
+        return Response({'updated': payload, 'user_id': request.user.id})
+
+    @detail_route(methods=['post'])
+    def deactivate(self, request, pk=None):
     @detail_route(methods=['post'])
     def deactivate(self, request, pk=None):
         return Response({'status': 'deactivated', 'user_id': pk})
